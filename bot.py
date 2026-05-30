@@ -23,6 +23,9 @@ from database import (
     get_all_user_ids,
     get_all_users_with_counts,
     get_unverified_users,
+    add_manual_points
+    remove_manual_points
+
 )
 
 # ─── Logging ────────────────────────────────────────────────────────────────
@@ -491,22 +494,12 @@ async def pontadd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_html(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.")
         return
 
-    # A te meglévő adatbázis modulodat használjuk a közvetlen SQL helyett
-    from database import get_all_users_with_counts  # Biztonsági ellenőrzéshez, de inkább nyers erővel frissítünk:
+    # Meghívjuk a database.py új, tiszta függvényét
     try:
-        import database
-        # Megpróbáljuk elérni a db-t úgy, ahogy a database.py-od belsőleg használja
-        if hasattr(database, "get_db"):
-            db = await database.get_db()
-            await db.execute("UPDATE users SET invite_count = invite_count + ? WHERE user_id = ?", (amount, target_id))
-            await db.commit()
-        else:
-            # Ha nincs get_db, akkor valószínűleg egy globális 'db' vagy '_db' változód van, vagy a háttérben fut az init_db.
-            # Hogy ezt áthidaljuk, a legtisztább, ha megnézzük a bot.log-ot.
-            await update.message.reply_text("⚠ Adatbázis kapcsolódási hiba a parancsban. Ellenőrizd a bot.log fájlt!")
-            return
+        from database import add_manual_points
+        await add_manual_points(target_id, amount)
     except Exception as e:
-        await update.message.reply_text(f"❌ Hiba történt az adatbázis írásakor: {e}")
+        await update.message.reply_text(f"❌ Hiba történt a pont hozzáadásakor: {e}")
         return
 
     new_count = await get_invite_count(target_id)
@@ -540,17 +533,12 @@ async def pontelvesz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_html(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.")
         return
 
+    # Meghívjuk a database.py új, tiszta függvényét
     try:
-        import database
-        if hasattr(database, "get_db"):
-            db = await database.get_db()
-            await db.execute("UPDATE users SET invite_count = MAX(0, invite_count - ?) WHERE user_id = ?", (amount, target_id))
-            await db.commit()
-        else:
-            await update.message.reply_text("⚠ Adatbázis kapcsolódási hiba a parancsban.")
-            return
+        from database import remove_manual_points
+        await remove_manual_points(target_id, amount)
     except Exception as e:
-        await update.message.reply_text(f"❌ Hiba történt az adatbázis írásakor: {e}")
+        await update.message.reply_text(f"❌ Hiba történt a pont levonásakor: {e}")
         return
 
     new_count = await get_invite_count(target_id)
@@ -574,6 +562,7 @@ async def pontelvesz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception:
         pass
+        
 # ─── Hibakezelő (Error handler) ──────────────────────────────────────────────
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
