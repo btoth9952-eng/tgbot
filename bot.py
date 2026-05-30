@@ -23,8 +23,8 @@ from database import (
     get_all_user_ids,
     get_all_users_with_counts,
     get_unverified_users,
-    add_manual_points
-    remove_manual_points
+    add_manual_points,
+    remove_manual_points,
 
 )
 
