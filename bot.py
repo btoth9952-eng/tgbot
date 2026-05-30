@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import os
@@ -17,7 +16,7 @@ from database import (
     get_user,
     register_user,
     verify_channel_member,
-    unverify_channel_member,  # <--- JAVÍTVA: Beimportálva a hiányzó függvény
+    unverify_channel_member,  # Beimportálva a hiányzó függvény
     get_invite_count,
     milestone_already_notified,
     mark_milestone_notified,
@@ -37,12 +36,12 @@ _file.setFormatter(_fmt)
 logging.basicConfig(level=logging.INFO, handlers=[_console, _file])
 logger = logging.getLogger(__name__)
 
-# ─── Config ─────────────────────────────────────────────────────────────────
+# ─── Konfiguráció ───────────────────────────────────────────────────────────
 
 BOT_TOKEN   = os.environ["TELEGRAM_BOT_TOKEN"]
 ADMIN_ID    = int(os.environ["TELEGRAM_ADMIN_ID"])
-CHANNEL     = os.environ["TELEGRAM_CHANNEL"]            # e.g. "@mychannel"
-CHANNEL_ID  = int(os.environ.get("TELEGRAM_GROUP_ID", 0))  # numeric ID fallback
+CHANNEL     = os.environ["TELEGRAM_CHANNEL"]            # pl. "@csatornad"
+CHANNEL_ID  = int(os.environ.get("TELEGRAM_GROUP_ID", 0))  # numerikus ID
 HEALTH_PORT = int(os.environ.get("PORT", 8000))
 MILESTONE   = 20
 
@@ -52,15 +51,15 @@ ACTIVE_MEMBER_STATUSES = {"member", "administrator", "creator", "restricted"}
 INACTIVE_MEMBER_STATUSES = {"left", "kicked", "banned"}
 
 
-# ─── Helpers ────────────────────────────────────────────────────────────────
+# ─── Segédfüggvények ─────────────────────────────────────────────────────────
 
 def channel_button() -> InlineKeyboardMarkup:
     url = f"https://t.me/{CHANNEL.lstrip('@')}"
-    return InlineKeyboardMarkup([[InlineKeyboardButton("📢 Join Channel", url=url)]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("📢 Csatlakozás a Csatornához", url=url)]])
 
 
 def _is_our_channel(chat) -> bool:
-    """Check if a chat object refers to our configured channel."""
+    """Ellenőrzi, hogy a chat objektum a mi beállított csatornánkra mutat-e."""
     if chat.username and chat.username.lower() == CHANNEL.lstrip("@").lower():
         return True
     if CHANNEL_ID and chat.id == CHANNEL_ID:
@@ -75,19 +74,18 @@ async def is_channel_member(bot, user_id: int) -> bool:
     except (BadRequest, Forbidden):
         return False
     except Exception as e:
-        logger.warning(f"is_channel_member error for {user_id}: {e}")
+        logger.warning(f"is_channel_member hiba a következő felhasználónál {user_id}: {e}")
         return False
 
 
 async def _credit_referral(bot, user_id: int):
     """
-    Mark user as channel-verified and notify their referrer.
-    Called both from /start (when already in channel) and from the
-    ChatMemberHandler (when they join the channel automatically).
+    Megjelöli a felhasználót igazoltként, és jóváírja a pontot a meghívónak.
+    Meghívódik a /start-ból és az automatikus csatorna-csatlakozás figyelőből is.
     """
     newly_verified = await verify_channel_member(user_id)
     if not newly_verified:
-        return  # already counted before
+        return  # Már korábban el lett könyvelve
 
     user_row = await get_user(user_id)
     if not user_row:
@@ -95,41 +93,41 @@ async def _credit_referral(bot, user_id: int):
 
     referrer_id = user_row["invited_by"]
     if referrer_id and await get_user(referrer_id):
-        # Notify referrer
+        # Meghívó értesítése
         count = await get_invite_count(referrer_id)
         try:
             await bot.send_message(
                 chat_id=referrer_id,
                 text=(
-                    f"🎉 Someone joined the channel using your invite link!\n"
-                    f"You now have <b>{count}</b> verified invite(s)."
+                    f"🎉 Valaki csatlakozott a csatornához a meghívó linkeddel!\n"
+                    f"Jelenleg <b>{count}</b> ellenőrzött meghívásod van."
                 ),
                 parse_mode="HTML",
             )
         except (BadRequest, Forbidden):
             pass
 
-        # Milestone check
+        # Cél elérése (Milestone) ellenőrzése
         if count >= MILESTONE and not await milestone_already_notified(referrer_id, MILESTONE):
             await mark_milestone_notified(referrer_id, MILESTONE)
             try:
                 await bot.send_message(
                     chat_id=referrer_id,
-                    text=f"🏆 Congratulations! You reached <b>{MILESTONE} invites</b>!",
+                    text=f"🏆 Gratulálunk! Elérted a(z) <b>{MILESTONE} sikeres meghívást</b>!",
                     parse_mode="HTML",
                 )
             except (BadRequest, Forbidden):
                 pass
 
-        # Notify new user that their referral was recorded
+        # Az új tag értesítése, hogy a meghívása sikeres volt
         try:
             invite_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
             await bot.send_message(
                 chat_id=user_id,
                 text=(
-                    "✅ You've joined the channel — your referral has been counted!\n\n"
-                    f"🔗 Your own invite link:\n<code>{invite_link}</code>\n\n"
-                    f"Share it to earn invites toward the goal of <b>{MILESTONE}</b>."
+                    "✅ Sikeresen csatlakoztál a csatornához — a meghívást rögzítettük!\n\n"
+                    f"🔗 A saját meghívó linked:\n<code>{invite_link}</code>\n\n"
+                    f"Oszd meg a barátaiddal, hogy elérd a <b>{MILESTONE}</b> meghívottas célt."
                 ),
                 parse_mode="HTML",
             )
@@ -137,19 +135,15 @@ async def _credit_referral(bot, user_id: int):
             pass
 
 
-# ─── Channel join handler (auto-fires when user joins the channel) ───────────
+# ─── Csatorna csatlakozás figyelő (Automatikusan lefut, ha belépnek) ───────────
 
 async def on_channel_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Telegram calls this whenever a user's status changes in any chat.
-    We filter for joins specifically in our channel.
-    """
     cm = update.chat_member
     if cm is None:
         return
 
     if not _is_our_channel(cm.chat):
-        return  # not our channel
+        return  # Nem a mi csatornánk
 
     old_status = cm.old_chat_member.status
     new_status = cm.new_chat_member.status
@@ -158,23 +152,23 @@ async def on_channel_member_update(update: Update, context: ContextTypes.DEFAULT
     is_now_inside = new_status in ACTIVE_MEMBER_STATUSES
 
     if not (was_outside and is_now_inside):
-        return  # not a join event
+        return  # Nem belépési esemény
 
     user = cm.new_chat_member.user
-    logger.info(f"User {user.id} (@{user.username}) joined channel — checking referral.")
+    logger.info(f"User {user.id} (@{user.username}) belépett a csatornába — ellenőrzés.")
 
-    # Make sure the user is in our DB (they may never have sent /start)
+    # Regisztráljuk az adatbázisba, ha még nem indította volna el a botot
     await register_user(user.id, user.username or "", user.full_name)
 
     await _credit_referral(context.bot, user.id)
 
 
-# ─── Command handlers ────────────────────────────────────────────────────────
+# ─── Parancs Kezelők (Commands) ───────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
-    # Parse referral arg
+    # Meghívó ID kinyerése a linkből
     referred_by = None
     if context.args:
         try:
@@ -194,20 +188,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         invited_by=referred_by if is_new else None,
     )
 
-    user_row = await get_user(user.id)
-    saved_referrer = user_row["invited_by"] if user_row else None
-
     in_channel = await is_channel_member(context.bot, user.id)
 
     if in_channel:
-        # Credit immediately if they're already in the channel
+        # Ha már bent van, azonnal jóváírjuk
         await _credit_referral(context.bot, user.id)
     else:
-        # Not in channel yet — show button and wait for ChatMemberHandler to fire
+        # Ha még nincs bent, gombot mutatunk neki
         await update.message.reply_text(
-            "⚠️ To use this bot you need to join our channel first.\n\n"
-            "👇 Click the button below, then come back — your referral will be "
-            "credited automatically the moment you join!",
+            "⚠️ A bot használatához először csatlakoznod kell a csatornánkhoz.\n\n"
+            "👇 Kattints az alábbi gombra, majd gyere vissza — a pontod automatikusan "
+            "jóváíródik, amint beléptél!",
             reply_markup=channel_button(),
         )
         return
@@ -216,13 +207,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = await get_invite_count(user.id)
 
     await update.message.reply_html(
-        f"👋 Welcome, {user.first_name}!\n\n"
-        f"🔗 Your personal invite link:\n"
+        f"👋 Üdvözlünk, {user.first_name}!\n\n"
+        f"🔗 A személyes meghívó linked:\n"
         f"<code>{invite_link}</code>\n\n"
-        f"Share it with friends. When they join and subscribe to the channel, "
-        f"it counts as a verified invite.\n\n"
-        f"📊 You have <b>{count}</b> verified invite(s) so far.\n"
-        f"🎯 Goal: <b>{MILESTONE}</b> invites"
+        f"Küldd el az ismerőseidnek. Ha csatlakoznak a csatornához, "
+        f"az ellenőrzött meghívásnak fog számítani.\n\n"
+        f"📊 Jelenleg <b>{count}</b> ellenőrzött meghívásod van.\n"
+        f"🎯 Cél: <b>{MILESTONE}</b> meghívott."
     )
 
 
@@ -245,45 +236,45 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pct = min(100, round(count / MILESTONE * 100))
 
     await update.message.reply_html(
-        f"📊 <b>Your referral stats</b>\n\n"
-        f"✅ Verified invites: <b>{count}</b>\n"
-        f"🎯 Goal: <b>{MILESTONE}</b>\n"
-        f"⏳ Remaining: <b>{remaining}</b>\n"
-        f"📈 Progress: {pct}% {bar}\n\n"
-        f"🔗 Your link:\n<code>{invite_link}</code>"
+        f"📊 <b>A te statisztikád</b>\n\n"
+        f"✅ Sikeres meghívások: <b>{count}</b>\n"
+        f"🎯 Cél: <b>{MILESTONE}</b>\n"
+        f"⏳ Hátralévő: <b>{remaining}</b>\n"
+        f"📈 Haladás: {pct}% {bar}\n\n"
+        f"🔗 A linked:\n<code>{invite_link}</code>"
     )
 
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = await get_all_users_with_counts(10)
     if not rows or all(r["invite_count"] == 0 for r in rows):
-        await update.message.reply_text("No referrals yet — be the first to invite someone!")
+        await update.message.reply_text("Még nincsenek meghívások — légy te az első!")
         return
 
     medals = ["🥇", "🥈", "🥉"]
-    lines = ["🏆 <b>Top 10 Referrers</b>\n"]
+    lines = ["🏆 <b>Top 10 Meghívó</b>\n"]
     for i, row in enumerate(rows):
         if row["invite_count"] == 0:
             break
         medal = medals[i] if i < 3 else f"{i + 1}."
-        name = row["full_name"] or row["username"] or f"User {row['user_id']}"
-        lines.append(f"{medal} {name} — <b>{row['invite_count']}</b> invite(s)")
+        name = row["full_name"] or row["username"] or f"Felhasználó {row['user_id']}"
+        lines.append(f"{medal} {name} — <b>{row['invite_count']}</b> meghívás")
 
     await update.message.reply_html("\n".join(lines))
 
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Admin only.")
+        await update.message.reply_text("⛔ Csak adminisztrátoroknak.")
         return
     if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>")
+        await update.message.reply_text("Használat: /broadcast <üzenet>")
         return
 
     text = " ".join(context.args)
     user_ids = await get_all_user_ids()
     if not user_ids:
-        await update.message.reply_text("No users registered yet.")
+        await update.message.reply_text("Még nincsenek regisztrált felhasználók.")
         return
 
     sent = skipped = 0
@@ -295,41 +286,41 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (BadRequest, Forbidden):
             skipped += 1
         except Exception as e:
-            logger.warning(f"Broadcast failed for {uid}: {e}")
+            logger.warning(f"Kiküldés sikertelen a következőhöz {uid}: {e}")
             skipped += 1
 
     await update.message.reply_html(
-        f"📣 Broadcast complete.\n\n"
-        f"✅ Delivered: <b>{sent}</b>\n"
-        f"⛔ Skipped: <b>{skipped}</b>"
+        f"📣 Üzenet kiküldése kész.\n\n"
+        f"✅ Kézbesítve: <b>{sent}</b>\n"
+        f"⛔ Kihagyva (letiltott/hibás): <b>{skipped}</b>"
     )
 
 
 async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ellenőrizd újra az összes felhasználót a csatorna alapján, és írd jóvá a kimaradt ajánlásokat (referralokat), illetve vond vissza azokat, amelyek tévesen maradtak meg"""
+    """Csatorna tagok ellenőrzése, hiányzó pontok megadása, kilépettektől levonás."""
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Admin only.")
+        await update.message.reply_text("⛔ Csak adminisztrátoroknak.")
         return
 
     all_users = await get_all_user_ids()
     if not all_users:
-        await update.message.reply_text("✅ Nincs új regisztrált tag. ")
+        await update.message.reply_text("✅ Nincs regisztrált felhasználó az adatbázisban.")
         return
 
     status_msg = await update.message.reply_html(
-        f"🔄 Szinkronizálás és ellenőrzés. <b>{len(all_users)}</b> felhasználók összevetése"
+        f"🔄 Szinkronizálás és csatorna ellenőrzés fut <b>{len(all_users)}</b> tagnál…"
     )
 
     newly_credited = 0
     newly_revoked = 0
-    revoked_details = []  # <--- Itt gyűjtjük a levonások részleteit
+    revoked_details = []
 
     for uid in all_users:
         try:
             try:
                 in_channel = await is_channel_member(context.bot, uid)
             except Exception as e:
-                logger.warning(f"Refresh API error for user {uid}: {e}")
+                logger.warning(f"Refresh API hiba a következő felhasználónál {uid}: {e}")
                 continue
 
             user_row = await get_user(uid)
@@ -338,7 +329,7 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             was_verified = bool(user_row["channel_verified"])
 
-            # ─── 1. ESET: BENT VAN a csatornában, de eddig nem volt igazolva ───
+            # ─── 1. ESET: BENT VAN, de eddig nem volt igazolva ───
             if in_channel and not was_verified:
                 credited = await verify_channel_member(uid)
                 if credited:
@@ -350,8 +341,8 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await context.bot.send_message(
                                 chat_id=referrer_id,
                                 text=(
-                                    f"🎉 Valaki csatlakozott a meghívód által!\n"
-                                    f"Jelenleg <b>{count}</b> ellenőrzött meghívásod van.(s)."
+                                    f"🎉 Valaki csatlakozott a csatornához a meghívó linkeddel!\n"
+                                    f"Jelenleg <b>{count}</b> ellenőrzött meghívásod van."
                                 ),
                                 parse_mode="HTML",
                             )
@@ -362,28 +353,36 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             try:
                                 await context.bot.send_message(
                                     chat_id=referrer_id,
-                                    text=f"🏆 Gratulálok! Elérted a <b>{MILESTONE} meghívott tagot!</b>!",
+                                    text=f"🏆 Gratulálunk! Elérted a(z) <b>{MILESTONE} meghívottas</b> célt!",
                                     parse_mode="HTML",
                                 )
                             except (BadRequest, Forbidden):
                                 pass
 
-            # ─── 2. ESET: KILÉPETT a csatornából, de az adatbázisban még igazolt ───
+            # ─── 2. ESET: KILÉPETT, de az adatbázisban még igazolt volt ───
             elif not in_channel and was_verified:
                 was_revoked, referrer_id, full_name = await unverify_channel_member(uid)
                 if was_revoked:
                     newly_revoked += 1
                     
-                    # Elmentjük az adminnak a részleteket
                     referrer_name = "Nincs/Ismeretlen"
+                    new_count_str = ""
+                    
                     if referrer_id:
                         ref_row = await get_user(referrer_id)
                         if ref_row:
                             referrer_name = ref_row["full_name"] or ref_row["username"] or str(referrer_id)
+                        
+                        # Lekérjük a friss, levonás utáni pontszámot
+                        current_count = await get_invite_count(referrer_id)
+                        new_count_str = f" (Új egyenleg: <b>{current_count}p</b>)"
                     
-                    revoked_details.append(f"• 👤 <b>{full_name}</b> kilépett ➔ pont levonva tőle: 👤 <b>{referrer_name}</b>")
+                    # Részletek mentése az admin listához az új pontszámmal
+                    revoked_details.append(
+                        f"• 👤 <b>{full_name}</b> kilépett ➔ pont levonva tőle: 👤 <b>{referrer_name}</b>{new_count_str}"
+                    )
 
-                    # Értesítjük a meghívót is
+                    # Értesítjük a meghívót a pontlevonásról
                     if referrer_id:
                         count = await get_invite_count(referrer_id)
                         try:
@@ -399,72 +398,72 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except (BadRequest, Forbidden):
                             pass
 
-            await asyncio.sleep(0.05)  # Biztonsági késleltetés a rate-limit ellen
+            await asyncio.sleep(0.05)
             
         except Exception as general_item_error:
-            logger.error(f"Error processing refresh item for uid {uid}: {general_item_error}")
+            logger.error(f"Hiba a frissítési folyamat közben (UID: {uid}): {general_item_error}")
             continue
 
-    # Összeállítjuk a záró üzenetet
+    # Összegző üzenet összeállítása
     result_text = (
         f"✅ <b>Frissítés befejezve.</b>\n\n"
-        f"🟢 Új ellenőrzött & Jutalom adva: <b>{newly_credited}</b>\n"
-        f"🔴 Kilépett / Visszavont (left): <b>{newly_revoked}</b>"
+        f"🟢 Újonnan igazolt & jóváírt: <b>{newly_credited}</b>\n"
+        f"🔴 Kilépett & levont: <b>{newly_revoked}</b>"
     )
 
-    # Ha volt levonás, hozzáfűzzük a részletes listát
     if revoked_details:
         result_text += "\n\n📋 <b>Levonások részletei:</b>\n" + "\n".join(revoked_details)
 
-    # Telegram üzenet méretlimit kezelése (max 4096 karakter)
     if len(result_text) > 4000:
         result_text = result_text[:4000] + "\n…(a lista a mérete miatt le lett vágva)"
 
     try:
         await status_msg.edit_text(result_text, parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Failed to send final status update message: {e}")
+        logger.error(f"Nem sikerült módosítani az admin státusz üzenetet: {e}")
+
+
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Admin only.")
+        await update.message.reply_text("⛔ Csak adminisztrátoroknak.")
         return
 
     rows = await get_all_users_with_counts(50)
     if not rows:
-        await update.message.reply_text("No users registered yet.")
+        await update.message.reply_text("Még nincs egyetlen regisztrált tag sem.")
         return
 
     total_users = len(rows)
     total_invites = sum(r["invite_count"] for r in rows)
-    lines = [f"👥 <b>Users ({total_users}) — Total invites: {total_invites}</b>\n"]
+    lines = [f"👥 <b>Felhasználók ({total_users}) — Összes meghívás: {total_invites}</b>\n"]
     for row in rows:
         name = row["full_name"] or row["username"] or str(row["user_id"])
         uname = f" (@{row['username']})" if row["username"] else ""
         icon = "✅" if row["channel_verified"] else "⏳"
         lines.append(
             f"{icon} {name}{uname} — <b>{row['invite_count']}</b> "
-            f"invite(s) [<code>{row['user_id']}</code>]"
+            f"meghívás [<code>{row['user_id']}</code>]"
         )
 
     text = "\n".join(lines)
     if len(text) > 4000:
-        text = text[:4000] + "\n…(truncated)"
+        text = text[:4000] + "\n…(levágva)"
     await update.message.reply_html(text)
 
 
-# ─── Error handler ───────────────────────────────────────────────────────────
+# ─── Hibakezelő (Error handler) ──────────────────────────────────────────────
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     err = context.error
     if isinstance(err, RetryAfter):
-        logger.warning(f"Rate limited — waiting {err.retry_after}s")
+        logger.warning(f"Rate limit — várakozás {err.retry_after}s")
         await asyncio.sleep(err.retry_after)
     elif isinstance(err, (TimedOut, NetworkError)):
-        logger.warning(f"Network error (auto-recover): {err}")
+        logger.warning(f"Hálózati hiba (automatikus újrapróbálkozás): {err}")
     elif isinstance(err, (BadRequest, Forbidden)):
-        logger.warning(f"Telegram API error: {err}")
+        logger.warning(f"Telegram API hiba: {err}")
     else:
-        logger.error(f"Unhandled error: {err}", exc_info=err)
+        logger.error(f"Kezeletlen hiba lépett fel: {err}", exc_info=err)
 
 
 # ─── Health server ───────────────────────────────────────────────────────────
@@ -476,12 +475,12 @@ async def run_health_server():
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", HEALTH_PORT).start()
-    logger.info(f"Health server listening on port {HEALTH_PORT}")
+    logger.info(f"Health szerver elindult a porton: {HEALTH_PORT}")
     await _shutdown.wait()
     await runner.cleanup()
 
 
-# ─── Bot runner ──────────────────────────────────────────────────────────────
+# ─── Bot indító és futtató környzet ──────────────────────────────────────────
 
 def _build_app() -> Application:
     app = (
@@ -499,7 +498,6 @@ def _build_app() -> Application:
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("refresh", refresh))
-    # Auto-detect channel joins → credit referral without /start needed
     app.add_handler(ChatMemberHandler(on_channel_member_update, ChatMemberHandler.CHAT_MEMBER))
     app.add_error_handler(error_handler)
     return app
@@ -515,9 +513,9 @@ async def _run_bot_once():
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
         )
-        logger.info("Bot polling active.")
+        logger.info("Bot lekérdezés (polling) aktív.")
         await _shutdown.wait()
-        logger.info("Shutdown signal — stopping bot.")
+        logger.info("Leállítási jel érkezett — bot megállítása.")
         await app.updater.stop()
         await app.stop()
 
@@ -527,15 +525,15 @@ async def run_bot_with_watchdog():
     while not _shutdown.is_set():
         attempt += 1
         try:
-            logger.info(f"Bot starting (attempt #{attempt})")
+            logger.info(f"Bot indulása (Kísérlet #{attempt})")
             await _run_bot_once()
-            break  # clean exit
+            break
         except (KeyboardInterrupt, SystemExit):
             break
         except Exception:
             wait = min(120, 5 * attempt)
             logger.error(
-                f"Bot crashed (attempt #{attempt}). Restarting in {wait}s...\n"
+                f"A bot összeomlott (Kísérlet #{attempt}). Újraindítás {wait} másodperc múlva...\n"
                 + traceback.format_exc()
             )
             try:
@@ -544,16 +542,16 @@ async def run_bot_with_watchdog():
                 break
 
 
-# ─── Entry point ─────────────────────────────────────────────────────────────
+# ─── Belépési Pont (Main) ─────────────────────────────────────────────────────
 
 def _handle_signal(sig):
-    logger.info(f"Received {sig.name} — shutting down.")
+    logger.info(f"Leállítási szignál érkezett ({sig.name}) — kikapcsolás.")
     _shutdown.set()
 
 
 def _asyncio_exception_handler(loop, context):
-    msg = context.get("exception", context.get("message", "unknown"))
-    logger.error(f"Uncaught asyncio exception: {msg}", exc_info=context.get("exception"))
+    msg = context.get("exception", context.get("message", "ismeretlen"))
+    logger.error(f"Kezeletlen aszinkron hiba: {msg}", exc_info=context.get("exception"))
 
 
 async def main():
@@ -562,9 +560,9 @@ async def main():
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _handle_signal, sig)
 
-    logger.info("=== Telegram Referral Bot starting ===")
+    logger.info("=== Telegram Ajánló Bot Elindul ===")
     await asyncio.gather(run_health_server(), run_bot_with_watchdog())
-    logger.info("=== Bot shut down cleanly ===")
+    logger.info("=== A bot sikeresen leállt ===")
 
 
 if __name__ == "__main__":
