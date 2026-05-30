@@ -304,75 +304,97 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Re-check every unverified user against the channel and credit missed referrals."""
+    """Re-check every user against the channel and credit missed referrals or revoke left ones."""
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Admin only.")
         return
 
-    pending = await get_unverified_users()
-    if not pending:
-        await update.message.reply_text("✅ Everyone is already verified — nothing to refresh.")
+    # Az összes regisztrált felhasználó ID-ját lekérjük az ellenőrzéshez
+    all_users = await get_all_user_ids()
+    if not all_users:
+        await update.message.reply_text("✅ No users registered yet — nothing to refresh.")
         return
 
     status_msg = await update.message.reply_html(
-        f"🔄 Checking <b>{len(pending)}</b> unverified user(s)…"
+        f"🔄 Syncing and checking <b>{len(all_users)}</b> user(s) against the channel…"
     )
 
     newly_credited = 0
-    still_outside = 0
+    newly_revoked = 0
 
-    for row in pending:
-        uid = row["user_id"]
+    for uid in all_users:
         try:
             in_channel = await is_channel_member(context.bot, uid)
         except Exception as e:
             logger.warning(f"Refresh: could not check {uid}: {e}")
-            still_outside += 1
             continue
 
-        if in_channel:
+        user_row = await get_user(uid)
+        if not user_row:
+            continue
+
+        was_verified = bool(user_row["channel_verified"])
+
+        # ─── 1. ESET: BENT VAN a csatornában, de eddig nem volt igazolva ───
+        if in_channel and not was_verified:
             credited = await verify_channel_member(uid)
             if credited:
                 newly_credited += 1
-                # Credit referrer silently (no message to the user during bulk refresh)
-                user_row = await get_user(uid)
-                if user_row and user_row["invited_by"]:
-                    referrer_id = user_row["invited_by"]
-                    if await get_user(referrer_id):
-                        count = await get_invite_count(referrer_id)
+                referrer_id = user_row["invited_by"]
+                if referrer_id and await get_user(referrer_id):
+                    count = await get_invite_count(referrer_id)
+                    try:
+                        await context.bot.send_message(
+                            chat_id=referrer_id,
+                            text=(
+                                f"🎉 Someone joined the channel using your invite link!\n"
+                                f"You now have <b>{count}</b> verified invite(s)."
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except (BadRequest, Forbidden):
+                        pass
+                    if count >= MILESTONE and not await milestone_already_notified(referrer_id, MILESTONE):
+                        await mark_milestone_notified(referrer_id, MILESTONE)
                         try:
                             await context.bot.send_message(
                                 chat_id=referrer_id,
-                                text=(
-                                    f"🎉 Someone joined the channel using your invite link!\n"
-                                    f"You now have <b>{count}</b> verified invite(s)."
-                                ),
+                                text=f"🏆 Congratulations! You reached <b>{MILESTONE} invites</b>!",
                                 parse_mode="HTML",
                             )
                         except (BadRequest, Forbidden):
                             pass
-                        if count >= MILESTONE and not await milestone_already_notified(referrer_id, MILESTONE):
-                            await mark_milestone_notified(referrer_id, MILESTONE)
-                            try:
-                                await context.bot.send_message(
-                                    chat_id=referrer_id,
-                                    text=f"🏆 Congratulations! You reached <b>{MILESTONE} invites</b>!",
-                                    parse_mode="HTML",
-                                )
-                            except (BadRequest, Forbidden):
-                                pass
-        else:
-            still_outside += 1
 
-        await asyncio.sleep(0.05)  # stay within rate limits
+        # ─── 2. ESET: KILÉPETT a csatornából, de az adatbázisban még igazolt ───
+        elif not in_channel and was_verified:
+            # Meghívjuk a database.py-ban lévő unverify függvényt, ami leveszi a pontot
+            was_revoked, referrer_id, full_name = await unverify_channel_member(uid)
+            if was_revoked:
+                newly_revoked += 1
+                # Ha van érvényes meghívója, elküldjük neki a kért értesítést
+                if referrer_id:
+                    count = await get_invite_count(referrer_id)
+                    try:
+                        await context.bot.send_message(
+                            chat_id=referrer_id,
+                            text=(
+                                f"⚠️ <b>Hoppá, egy meghívottad kilépett!</b>\n\n"
+                                f"👤 <b>{full_name}</b> elhagyta a csatornát, ezért a pontja levonásra került.\n"
+                                f"Jelenlegi sikeres meghívásaid száma: <b>{count}</b>."
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except (BadRequest, Forbidden):
+                        pass
+
+        await asyncio.sleep(0.05)  # Telegram rate-limit elkerülése érdekében
 
     await status_msg.edit_text(
-        f"✅ Refresh complete.\n\n"
+        f"✅ <b>Refresh complete.</b>\n\n"
         f"🟢 Newly verified & credited: <b>{newly_credited}</b>\n"
-        f"⏳ Still not in channel: <b>{still_outside}</b>",
+        f"🔴 Revoked & deducted (left): <b>{newly_revoked}</b>",
         parse_mode="HTML",
     )
-
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
