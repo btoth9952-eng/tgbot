@@ -136,27 +136,51 @@ async def get_all_users_with_counts(limit: int = 50):
 
 # --- AZ ÚJ KILÉPÉST KEZELŐ FÜGGVÉNY ---
 async def unverify_channel_member(user_id: int):
-    """Visszavonja az igazolást, levonja a pontot és visszaadja a meghívó ID-ját + a kilépett nevét."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT invited_by, full_name, channel_verified FROM users WHERE user_id = ?", (user_id,)
-        ) as cur:
-            row = await cur.fetchone()
-            
-        if row is None:
-            return False, None, "Ismeretlen"
-            
-        was_verified = bool(row["channel_verified"])
-        invited_by = row["invited_by"]
-        full_name = row["full_name"] or "Ismeretlen"
+    """
+    Leveszi a felhasználó hitelesítését, levonja a pontot a meghívótól,
+    és elmenti a változásokat.
+    """
+    db = await get_db()  # Győződj meg róla, hogy nálad is így hívják a DB kapcsolatot!
+    
+    # 1. Lekérjük a felhasználó adatait
+    async with db.execute(
+        "SELECT invited_by, full_name, username, channel_verified FROM users WHERE user_id = ?", 
+        (user_id,)
+    ) as cursor:
+        row = await cursor.fetchone()
         
-        if was_verified:
-            # Levonjuk a pontot (átállítjuk 0-ra)
-            await db.execute(
-                "UPDATE users SET channel_verified = 0 WHERE user_id = ?", (user_id,)
-            )
-            await db.commit()
-            return True, invited_by, full_name
-            
-        return False, None, full_name
+    if not row:
+        return False, None, ""
+        
+    # Kezeljük a dict és a tuple formátumot is, hogy biztosan ne hibázzon
+    try:
+        was_verified = row["channel_verified"]
+        referrer_id = row["invited_by"]
+        full_name = row["full_name"] or row["username"] or f"User {user_id}"
+    except (TypeError, KeyError):
+        # Ha sima tuple-ként adja vissza az adatbázis (pl. row[0]):
+        referrer_id = row[0]
+        full_name = row[1] or row[2] or f"User {user_id}"
+        was_verified = row[3]
+
+    # HA MÁR NEM VOLT IGAZOLT, akkor nem csinálunk semmit! (Ez gátolja meg az ismétlődést)
+    if not was_verified:
+        return False, None, ""
+
+    # 2. Átállítjuk a felhasználót NEM igazoltra az adatbázisban
+    await db.execute(
+        "UPDATE users SET channel_verified = 0 WHERE user_id = ?", 
+        (user_id,)
+    )
+    
+    # 3. Ha van meghívója, levonjuk a pontot, de nem engedjük 0 alá menni (MAX(0, ...))
+    if referrer_id:
+        await db.execute(
+            "UPDATE users SET invite_count = MAX(0, invite_count - 1) WHERE user_id = ?", 
+            (referrer_id,)
+        )
+        
+    # 4. CRITICAL: Elmentjük a változtatásokat az adatbázis fájlba!
+    await db.commit()
+    
+    return True, referrer_id, full_name
