@@ -132,3 +132,31 @@ async def get_all_users_with_counts(limit: int = 50):
             LIMIT ?
         """, (limit,)) as cur:
             return await cur.fetchall()
+
+
+# --- AZ ÚJ KILÉPÉST KEZELŐ FÜGGVÉNY ---
+async def unverify_channel_member(user_id: int):
+    """Visszavonja az igazolást, levonja a pontot és visszaadja a meghívó ID-ját + a kilépett nevét."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT invited_by, full_name, channel_verified FROM users WHERE user_id = ?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            
+        if row is None:
+            return False, None, "Ismeretlen"
+            
+        was_verified = bool(row["channel_verified"])
+        invited_by = row["invited_by"]
+        full_name = row["full_name"] or "Ismeretlen"
+        
+        if was_verified:
+            # Levonjuk a pontot (átállítjuk 0-ra)
+            await db.execute(
+                "UPDATE users SET channel_verified = 0 WHERE user_id = ?", (user_id,)
+            )
+            await db.commit()
+            return True, invited_by, full_name
+            
+        return False, None, full_name
