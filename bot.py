@@ -313,7 +313,8 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     newly_credited = 0
     newly_revoked = 0
-    revoked_details = []
+    credited_details = []  # <--- ÚJ: Itt gyűjtjük az új jóváírások részleteit
+    revoked_details = []   # Itt gyűjtjük a levonások részleteit
 
     for uid in all_users:
         try:
@@ -328,6 +329,7 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 continue
 
             was_verified = bool(user_row["channel_verified"])
+            full_name = user_row["full_name"] or user_row["username"] or f"User {uid}"
 
             # ─── 1. ESET: BENT VAN, de eddig nem volt igazolva ───
             if in_channel and not was_verified:
@@ -335,20 +337,33 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if credited:
                     newly_credited += 1
                     referrer_id = user_row["invited_by"]
-                    if referrer_id and await get_user(referrer_id):
-                        count = await get_invite_count(referrer_id)
+                    
+                    referrer_name = "Nincs/Ismeretlen"
+                    new_count_str = ""
+                    
+                    if referrer_id:
+                        ref_row = await get_user(referrer_id)
+                        if ref_row:
+                            referrer_name = ref_row["full_name"] or ref_row["username"] or str(referrer_id)
+                        
+                        # Lekérjük a friss, jóváírás utáni pontszámot
+                        current_count = await get_invite_count(referrer_id)
+                        new_count_str = f" (Új egyenleg: <b>{current_count}p</b>)"
+                        
+                        # Értesítjük a meghívót privátban is
                         try:
                             await context.bot.send_message(
                                 chat_id=referrer_id,
                                 text=(
                                     f"🎉 Valaki csatlakozott a csatornához a meghívó linkeddel!\n"
-                                    f"Jelenleg <b>{count}</b> ellenőrzött meghívásod van."
+                                    f"Jelenleg <b>{current_count}</b> ellenőrzött meghívásod van."
                                 ),
                                 parse_mode="HTML",
                             )
                         except (BadRequest, Forbidden):
                             pass
-                        if count >= MILESTONE and not await milestone_already_notified(referrer_id, MILESTONE):
+                            
+                        if current_count >= MILESTONE and not await milestone_already_notified(referrer_id, MILESTONE):
                             await mark_milestone_notified(referrer_id, MILESTONE)
                             try:
                                 await context.bot.send_message(
@@ -358,10 +373,15 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 )
                             except (BadRequest, Forbidden):
                                 pass
+                    
+                    # <--- ÚJ: Elmentjük a részleteket az adminnak az új belépőről
+                    credited_details.append(
+                        f"• 👤 <b>{full_name}</b> belépett ➔ pont megadva neki: 👤 <b>{referrer_name}</b>{new_count_str}"
+                    )
 
             # ─── 2. ESET: KILÉPETT, de az adatbázisban még igazolt volt ───
             elif not in_channel and was_verified:
-                was_revoked, referrer_id, full_name = await unverify_channel_member(uid)
+                was_revoked, referrer_id, revoked_name = await unverify_channel_member(uid)
                 if was_revoked:
                     newly_revoked += 1
                     
@@ -373,30 +393,25 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if ref_row:
                             referrer_name = ref_row["full_name"] or ref_row["username"] or str(referrer_id)
                         
-                        # Lekérjük a friss, levonás utáni pontszámot
                         current_count = await get_invite_count(referrer_id)
                         new_count_str = f" (Új egyenleg: <b>{current_count}p</b>)"
-                    
-                    # Részletek mentése az admin listához az új pontszámmal
-                    revoked_details.append(
-                        f"• 👤 <b>{full_name}</b> kilépett ➔ pont levonva tőle: 👤 <b>{referrer_name}</b>{new_count_str}"
-                    )
-
-                    # Értesítjük a meghívót a pontlevonásról
-                    if referrer_id:
-                        count = await get_invite_count(referrer_id)
+                        
                         try:
                             await context.bot.send_message(
                                 chat_id=referrer_id,
                                 text=(
                                     f"⚠️ <b>Hoppá, egy meghívottad kilépett!</b>\n\n"
-                                    f"👤 <b>{full_name}</b> elhagyta a csatornát, ezért a pontja levonásra került.\n"
-                                    f"Jelenlegi sikeres meghívásaid száma: <b>{count}</b>."
+                                    f"👤 <b>{revoked_name}</b> elhagyta a csatornát, ezért a pontja levonásra került.\n"
+                                    f"Jelenlegi sikeres meghívásaid száma: <b>{current_count}</b>."
                                 ),
                                 parse_mode="HTML",
                             )
                         except (BadRequest, Forbidden):
                             pass
+                    
+                    revoked_details.append(
+                        f"• 👤 <b>{revoked_name}</b> kilépett ➔ pont levonva tőle: 👤 <b>{referrer_name}</b>{new_count_str}"
+                    )
 
             await asyncio.sleep(0.05)
             
@@ -411,6 +426,11 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔴 Kilépett & levont: <b>{newly_revoked}</b>"
     )
 
+    # <--- ÚJ: Ha volt új belépő, kiírjuk a részleteket
+    if credited_details:
+        result_text += "\n\n➕ <b>Jóváírások részletei:</b>\n" + "\n".join(credited_details)
+
+    # Ha volt levonás, kiírjuk a részleteket
     if revoked_details:
         result_text += "\n\n📋 <b>Levonások részletei:</b>\n" + "\n".join(revoked_details)
 
@@ -421,8 +441,6 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(result_text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Nem sikerült módosítani az admin státusz üzenetet: {e}")
-
-
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Csak adminisztrátoroknak.")
@@ -450,7 +468,102 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = text[:4000] + "\n…(levágva)"
     await update.message.reply_html(text)
 
+# 
+async def pontadd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin parancs: Pont manuális hozzáadása egy felhasználóhoz ID alapján."""
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Csak adminisztrátoroknak.")
+        return
 
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Használat: /pontadd <felhasználó_ID> <mennyiség>")
+        return
+
+    try:
+        target_id = int(context.args[0])
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Hibás formátum! Az ID-nek és a mennyiségnek is számnak kell lennie.")
+        return
+
+    user_row = await get_user(target_id)
+    if not user_row:
+        await update.message.reply_text(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.", parse_mode="HTML")
+        return
+
+    # Hozzáadjuk a pontot az adatbázisban
+    from database import get_db
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET invite_count = invite_count + ? WHERE user_id = ?",
+        (amount, target_id)
+    )
+    await db.commit()
+
+    new_count = await get_invite_count(target_id)
+    name = user_row["full_name"] or user_row["username"] or str(target_id)
+
+    await update.message.reply_html(
+        f"✅ Sikeresen hozzáadva <b>{amount}</b> pont a következő taghoz: <b>{name}</b>.\n"
+        f"Új egyenlege: <b>{new_count}p</b>"
+    )
+
+
+async def pontelvesz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin parancs: Pont manuális levonása egy felhasználótól ID alapján, kilépési értesítéssel."""
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Csak adminisztrátoroknak.")
+        return
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Használat: /pontelvesz <felhasználó_ID> <mennyiség>")
+        return
+
+    try:
+        target_id = int(context.args[0])
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Hibás formátum! Az ID-nek és a mennyiségnek is számnak kell lennie.")
+        return
+
+    user_row = await get_user(target_id)
+    if not user_row:
+        await update.message.reply_text(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.", parse_mode="HTML")
+        return
+
+    # Levonjuk a pontot az adatbázisban (de nem engedjük 0 alá)
+    from database import get_db
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET invite_count = MAX(0, invite_count - ?) WHERE user_id = ?",
+        (amount, target_id)
+    )
+    await db.commit()
+
+    new_count = await get_invite_count(target_id)
+    name = user_row["full_name"] or user_row["username"] or str(target_id)
+
+    # Visszajelzés az adminnak
+    await update.message.reply_html(
+        f"📉 Manuálisan levonva <b>{amount}</b> pont tőle: <b>{name}</b>.\n"
+        f"Új egyenlege: <b>{new_count}p</b>\n\n"
+        f"📢 <i>A rendszer elküldte neki a kilépésről szóló figyelmeztetést!</i>"
+    )
+
+    # Elküldjük a kamu "kilépéses" értesítést a felhasználónak, amit kértél:
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                f"⚠️ <b>Hoppá, egy meghívottad kilépett!</b>\n\n"
+                f"Valaki elhagyta a csatornát, ezért a pontja levonásra került.\n"
+                f"Jelenlegi sikeres meghívásaid száma: <b>{new_count}</b>."
+            ),
+            parse_mode="HTML",
+        )
+    except (BadRequest, Forbidden):
+        logger.warning(f"Nem sikerült értesítést küldeni a(z) {target_id} ID-re, lehet letiltotta a botot.")
+        
 # ─── Hibakezelő (Error handler) ──────────────────────────────────────────────
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -498,6 +611,8 @@ def _build_app() -> Application:
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("refresh", refresh))
+    app.add_handler(CommandHandler("pontadd", pontadd))
+    app.add_handler(CommandHandler("pontelvesz", pontelvesz))
     app.add_handler(ChatMemberHandler(on_channel_member_update, ChatMemberHandler.CHAT_MEMBER))
     app.add_error_handler(error_handler)
     return app
