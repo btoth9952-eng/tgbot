@@ -16,7 +16,7 @@ from database import (
     get_user,
     register_user,
     verify_channel_member,
-    unverify_channel_member,  # Beimportálva a hiányzó függvény
+    unverify_channel_member,
     get_invite_count,
     milestone_already_notified,
     mark_milestone_notified,
@@ -24,8 +24,7 @@ from database import (
     get_all_users_with_counts,
     get_unverified_users,
     add_manual_points,
-    remove_manual_points,
-
+    remove_manual_points
 )
 
 # ─── Logging ────────────────────────────────────────────────────────────────
@@ -316,8 +315,8 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     newly_credited = 0
     newly_revoked = 0
-    credited_details = []  # <--- ÚJ: Itt gyűjtjük az új jóváírások részleteit
-    revoked_details = []   # Itt gyűjtjük a levonások részleteit
+    credited_details = []  
+    revoked_details = []   
 
     for uid in all_users:
         try:
@@ -349,11 +348,9 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if ref_row:
                             referrer_name = ref_row["full_name"] or ref_row["username"] or str(referrer_id)
                         
-                        # Lekérjük a friss, jóváírás utáni pontszámot
                         current_count = await get_invite_count(referrer_id)
                         new_count_str = f" (Új egyenleg: <b>{current_count}p</b>)"
                         
-                        # Értesítjük a meghívót privátban is
                         try:
                             await context.bot.send_message(
                                 chat_id=referrer_id,
@@ -377,7 +374,6 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             except (BadRequest, Forbidden):
                                 pass
                     
-                    # <--- ÚJ: Elmentjük a részleteket az adminnak az új belépőről
                     credited_details.append(
                         f"• 👤 <b>{full_name}</b> belépett ➔ pont megadva neki: 👤 <b>{referrer_name}</b>{new_count_str}"
                     )
@@ -422,18 +418,15 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Hiba a frissítési folyamat közben (UID: {uid}): {general_item_error}")
             continue
 
-    # Összegző üzenet összeállítása
     result_text = (
         f"✅ <b>Frissítés befejezve.</b>\n\n"
         f"🟢 Újonnan igazolt & jóváírt: <b>{newly_credited}</b>\n"
         f"🔴 Kilépett & levont: <b>{newly_revoked}</b>"
     )
 
-    # <--- ÚJ: Ha volt új belépő, kiírjuk a részleteket
     if credited_details:
         result_text += "\n\n➕ <b>Jóváírások részletei:</b>\n" + "\n".join(credited_details)
 
-    # Ha volt levonás, kiírjuk a részleteket
     if revoked_details:
         result_text += "\n\n📋 <b>Levonások részletei:</b>\n" + "\n".join(revoked_details)
 
@@ -444,6 +437,8 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(result_text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Nem sikerült módosítani az admin státusz üzenetet: {e}")
+
+
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Csak adminisztrátoroknak.")
@@ -471,7 +466,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = text[:4000] + "\n…(levágva)"
     await update.message.reply_html(text)
 
-# 
+
 async def pontadd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin parancs: Pont manuális hozzáadása egy felhasználóhoz ID alapján."""
     if update.effective_user.id != ADMIN_ID:
@@ -489,14 +484,12 @@ async def pontadd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Hibás formátum! Az ID-nek és a mennyiségnek is számnak kell lennie.")
         return
 
-    user_row = await get_user(target_id)
+    user_row = await get_user(target_id)  # <-- JAVÍTVA: get_db helyett get_user
     if not user_row:
         await update.message.reply_html(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.")
         return
 
-    # Meghívjuk a database.py új, tiszta függvényét
     try:
-        from database import add_manual_points
         await add_manual_points(target_id, amount)
     except Exception as e:
         await update.message.reply_text(f"❌ Hiba történt a pont hozzáadásakor: {e}")
@@ -528,14 +521,12 @@ async def pontelvesz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Hibás formátum! Az ID-nek és a mennyiségnek is számnak kell lennie.")
         return
 
-    user_row = await get_user(target_id)
+    user_row = await get_user(target_id)  # <-- JAVÍTVA: get_db helyett get_user
     if not user_row:
         await update.message.reply_html(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.")
         return
 
-    # Meghívjuk a database.py új, tiszta függvényét
     try:
-        from database import remove_manual_points
         await remove_manual_points(target_id, amount)
     except Exception as e:
         await update.message.reply_text(f"❌ Hiba történt a pont levonásakor: {e}")
@@ -562,7 +553,8 @@ async def pontelvesz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception:
         pass
-        
+
+
 # ─── Hibakezelő (Error handler) ──────────────────────────────────────────────
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
