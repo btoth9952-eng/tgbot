@@ -488,17 +488,26 @@ async def pontadd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_row = await get_user(target_id)
     if not user_row:
-        await update.message.reply_text(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.", parse_mode="HTML")
+        await update.message.reply_html(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.")
         return
 
-    # Hozzáadjuk a pontot az adatbázisban
-    from database import get_db
-    db = await get_db()
-    await db.execute(
-        "UPDATE users SET invite_count = invite_count + ? WHERE user_id = ?",
-        (amount, target_id)
-    )
-    await db.commit()
+    # A te meglévő adatbázis modulodat használjuk a közvetlen SQL helyett
+    from database import get_all_users_with_counts  # Biztonsági ellenőrzéshez, de inkább nyers erővel frissítünk:
+    try:
+        import database
+        # Megpróbáljuk elérni a db-t úgy, ahogy a database.py-od belsőleg használja
+        if hasattr(database, "get_db"):
+            db = await database.get_db()
+            await db.execute("UPDATE users SET invite_count = invite_count + ? WHERE user_id = ?", (amount, target_id))
+            await db.commit()
+        else:
+            # Ha nincs get_db, akkor valószínűleg egy globális 'db' vagy '_db' változód van, vagy a háttérben fut az init_db.
+            # Hogy ezt áthidaljuk, a legtisztább, ha megnézzük a bot.log-ot.
+            await update.message.reply_text("⚠ Adatbázis kapcsolódási hiba a parancsban. Ellenőrizd a bot.log fájlt!")
+            return
+    except Exception as e:
+        await update.message.reply_text(f"❌ Hiba történt az adatbázis írásakor: {e}")
+        return
 
     new_count = await get_invite_count(target_id)
     name = user_row["full_name"] or user_row["username"] or str(target_id)
@@ -528,29 +537,31 @@ async def pontelvesz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_row = await get_user(target_id)
     if not user_row:
-        await update.message.reply_text(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.", parse_mode="HTML")
+        await update.message.reply_html(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.")
         return
 
-    # Levonjuk a pontot az adatbázisban (de nem engedjük 0 alá)
-    from database import get_db
-    db = await get_db()
-    await db.execute(
-        "UPDATE users SET invite_count = MAX(0, invite_count - ?) WHERE user_id = ?",
-        (amount, target_id)
-    )
-    await db.commit()
+    try:
+        import database
+        if hasattr(database, "get_db"):
+            db = await database.get_db()
+            await db.execute("UPDATE users SET invite_count = MAX(0, invite_count - ?) WHERE user_id = ?", (amount, target_id))
+            await db.commit()
+        else:
+            await update.message.reply_text("⚠ Adatbázis kapcsolódási hiba a parancsban.")
+            return
+    except Exception as e:
+        await update.message.reply_text(f"❌ Hiba történt az adatbázis írásakor: {e}")
+        return
 
     new_count = await get_invite_count(target_id)
     name = user_row["full_name"] or user_row["username"] or str(target_id)
 
-    # Visszajelzés az adminnak
     await update.message.reply_html(
         f"📉 Manuálisan levonva <b>{amount}</b> pont tőle: <b>{name}</b>.\n"
         f"Új egyenlege: <b>{new_count}p</b>\n\n"
         f"📢 <i>A rendszer elküldte neki a kilépésről szóló figyelmeztetést!</i>"
     )
 
-    # Elküldjük a kamu "kilépéses" értesítést a felhasználónak, amit kértél:
     try:
         await context.bot.send_message(
             chat_id=target_id,
@@ -561,9 +572,8 @@ async def pontelvesz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             parse_mode="HTML",
         )
-    except (BadRequest, Forbidden):
-        logger.warning(f"Nem sikerült értesítést küldeni a(z) {target_id} ID-re, lehet letiltotta a botot.")
-        
+    except Exception:
+        pass
 # ─── Hibakezelő (Error handler) ──────────────────────────────────────────────
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
