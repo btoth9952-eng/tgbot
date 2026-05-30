@@ -132,7 +132,23 @@ async def get_all_users_with_counts(limit: int = 50):
             LIMIT ?
         """, (limit,)) as cur:
             return await cur.fetchall()
+async def add_manual_points(user_id: int, amount: int):
+    """Manuálisan hozzáad pontot egy felhasználóhoz és elmenti."""
+    db = await get_db()  # Itt a database.py-on belül ez a get_db() működni fog
+    await db.execute(
+        "UPDATE users SET invite_count = invite_count + ? WHERE user_id = ?",
+        (amount, user_id)
+    )
+    await db.commit()
 
+async def remove_manual_points(user_id: int, amount: int):
+    """Manuálisan levon pontot egy felhasználótól (0-ig) és elmenti."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET invite_count = MAX(0, invite_count - ?) WHERE user_id = ?",
+        (amount, user_id)
+    )
+    await db.commit()
 
 # --- AZ ÚJ KILÉPÉST KEZELŐ FÜGGVÉNY ---
 async def unverify_channel_member(user_id: int):
