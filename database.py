@@ -109,8 +109,8 @@ async def get_unverified_users() -> list[dict]:
 
 async def get_all_user_ids() -> list[int]:
     async with aiosqlite.connect(DB_PATH) as db:
-        # CSAK a valós Telegram ID-kat kérjük le (amik nem NULL-ok és nem 0-nál kisebbek/fantomok)
-        async with db.execute("SELECT user_id FROM users WHERE user_id IS NOT NULL AND username != 'manual_bonus'") as cur:
+        # Csak a valódi, pozitív Telegram ID-kat frissítse a bot a /refresh során
+        async with db.execute("SELECT user_id FROM users WHERE user_id > 0") as cur:
             rows = await cur.fetchall()
             return [r[0] for r in rows]
 
@@ -136,30 +136,36 @@ async def get_all_users_with_counts(limit: int = 50):
 
 
 async def add_manual_points(user_id: int, amount: int):
-    """Manuálisan hozzáad pontot (ál-felhasználók generálásával a háttérben)."""
+    """Manuálisan hozzáad pontot teljesen egyedi, negatív fantom ID-k generálásával."""
     async with aiosqlite.connect(DB_PATH) as db:
+        # Megkeressük az eddigi legkisebb ID-t, hogy ez alá menjünk (biztosítva az egyediséget)
+        async with db.execute("SELECT MIN(user_id) FROM users") as cur:
+            row = await cur.fetchone()
+            current_min = row[0] if (row and row[0] and row[0] < 0) else -100000
+        
         for i in range(amount):
-            # Létrehozunk láthatatlan "fantom" felhasználókat, akik az illetőre mutatnak és igazoltak
+            unique_fantom_id = current_min - (i + 1)
             await db.execute("""
                 INSERT INTO users (user_id, username, full_name, invited_by, channel_verified)
-                VALUES (NULL, 'manual_bonus', 'Manuális Pont', ?, 1)
-            """, (user_id,))
+                VALUES (?, 'manual_bonus', 'Manuális Pont', ?, 1)
+            """, (unique_fantom_id, user_id))
         await db.commit()
 
 
 async def remove_manual_points(user_id: int, amount: int):
-    """Manuálisan levon pontot a felhasználótól (fantomok vagy igazolások törlésével)."""
+    """Manuálisan levon pontot a felhasználótól (elsősorban a manuális pontokat törli)."""
     async with aiosqlite.connect(DB_PATH) as db:
-        # Kiválasztunk 'amount' számú olyan felhasználót, akit ő hívott meg és aktív, majd lekapcsoljuk őket
-        async with db.execute(
-            "SELECT user_id FROM users WHERE invited_by = ? AND channel_verified = 1 LIMIT ?",
-            (user_id, amount)
-        ) as cur:
+        # Először megpróbáljuk a manuálisan adott (negatív ID-s) pontokat törölni
+        async with db.execute("""
+            SELECT user_id FROM users 
+            WHERE invited_by = ? AND channel_verified = 1 
+            ORDER BY user_id ASC LIMIT ?
+        """, (user_id, amount)) as cur:
             rows = await cur.fetchall()
         
         for row in rows:
             await db.execute(
-                "UPDATE users SET channel_verified = 0 WHERE user_id = ?", (row[0],)
+                "DELETE FROM users WHERE user_id = ?", (row[0],)
             )
         await db.commit()
 
