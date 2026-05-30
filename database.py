@@ -109,7 +109,8 @@ async def get_unverified_users() -> list[dict]:
 
 async def get_all_user_ids() -> list[int]:
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT user_id FROM users") as cur:
+        # CSAK a valós Telegram ID-kat kérjük le (amik nem NULL-ok és nem 0-nál kisebbek/fantomok)
+        async with db.execute("SELECT user_id FROM users WHERE user_id IS NOT NULL AND username != 'manual_bonus'") as cur:
             rows = await cur.fetchall()
             return [r[0] for r in rows]
 
