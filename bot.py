@@ -306,26 +306,26 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Re-check every user against the channel and credit missed referrals or revoke left ones."""
+    """Ellenőrizd újra az összes felhasználót a csatorna alapján, és írd jóvá a kimaradt ajánlásokat (referralokat), illetve vond vissza azokat, amelyek tévesen maradtak meg"""
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Admin only.")
         return
 
     all_users = await get_all_user_ids()
     if not all_users:
-        await update.message.reply_text("✅ No users registered yet — nothing to refresh.")
+        await update.message.reply_text("✅ Nincs új regisztrált tag. ")
         return
 
     status_msg = await update.message.reply_html(
-        f"🔄 Syncing and checking <b>{len(all_users)}</b> user(s) against the channel…"
+        f"🔄 Szinkronizálás és ellenőrzés. <b>{len(all_users)}</b> felhasználók összevetése"
     )
 
     newly_credited = 0
     newly_revoked = 0
+    revoked_details = []  # <--- Itt gyűjtjük a levonások részleteit
 
     for uid in all_users:
         try:
-            # JAVÍTVA: Külön belső try-except blokk, hogy egyetlen hiba se akassza meg a ciklust
             try:
                 in_channel = await is_channel_member(context.bot, uid)
             except Exception as e:
@@ -350,8 +350,8 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await context.bot.send_message(
                                 chat_id=referrer_id,
                                 text=(
-                                    f"🎉 Someone joined the channel using your invite link!\n"
-                                    f"You now have <b>{count}</b> verified invite(s)."
+                                    f"🎉 Valaki csatlakozott a meghívód által!\n"
+                                    f"Jelenleg <b>{count}</b> ellenőrzött meghívásod van.(s)."
                                 ),
                                 parse_mode="HTML",
                             )
@@ -362,7 +362,7 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             try:
                                 await context.bot.send_message(
                                     chat_id=referrer_id,
-                                    text=f"🏆 Congratulations! You reached <b>{MILESTONE} invites</b>!",
+                                    text=f"🏆 Gratulálok! Elérted a <b>{MILESTONE} meghívott tagot!</b>!",
                                     parse_mode="HTML",
                                 )
                             except (BadRequest, Forbidden):
@@ -373,6 +373,17 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 was_revoked, referrer_id, full_name = await unverify_channel_member(uid)
                 if was_revoked:
                     newly_revoked += 1
+                    
+                    # Elmentjük az adminnak a részleteket
+                    referrer_name = "Nincs/Ismeretlen"
+                    if referrer_id:
+                        ref_row = await get_user(referrer_id)
+                        if ref_row:
+                            referrer_name = ref_row["full_name"] or ref_row["username"] or str(referrer_id)
+                    
+                    revoked_details.append(f"• 👤 <b>{full_name}</b> kilépett ➔ pont levonva tőle: 👤 <b>{referrer_name}</b>")
+
+                    # Értesítjük a meghívót is
                     if referrer_id:
                         count = await get_invite_count(referrer_id)
                         try:
@@ -394,17 +405,25 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error processing refresh item for uid {uid}: {general_item_error}")
             continue
 
+    # Összeállítjuk a záró üzenetet
+    result_text = (
+        f"✅ <b>Frissítés befejezve.</b>\n\n"
+        f"🟢 Új ellenőrzött & Jutalom adva: <b>{newly_credited}</b>\n"
+        f"🔴 Kilépett / Visszavont (left): <b>{newly_revoked}</b>"
+    )
+
+    # Ha volt levonás, hozzáfűzzük a részletes listát
+    if revoked_details:
+        result_text += "\n\n📋 <b>Levonások részletei:</b>\n" + "\n".join(revoked_details)
+
+    # Telegram üzenet méretlimit kezelése (max 4096 karakter)
+    if len(result_text) > 4000:
+        result_text = result_text[:4000] + "\n…(a lista a mérete miatt le lett vágva)"
+
     try:
-        await status_msg.edit_text(
-            f"✅ <b>Refresh complete.</b>\n\n"
-            f"🟢 Newly verified & credited: <b>{newly_credited}</b>\n"
-            f"🔴 Revoked & deducted (left): <b>{newly_revoked}</b>",
-            parse_mode="HTML",
-        )
+        await status_msg.edit_text(result_text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Failed to send final status update message: {e}")
-
-
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Admin only.")
