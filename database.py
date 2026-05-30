@@ -1,5 +1,6 @@
 import aiosqlite
 import os
+import time
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "referrals.db")
 
@@ -136,22 +137,23 @@ async def get_all_users_with_counts(limit: int = 50):
 
 
 async def add_manual_points(user_id: int, amount: int):
-    """Manuálisan hozzáad pontot teljesen egyedi, negatív fantom ID-k generálásával."""
+    """Manuálisan hozzáad pontot teljesen egyedi, időbélyeg alapú negatív ID-k generálásával."""
     async with aiosqlite.connect(DB_PATH) as db:
-        # Megkeressük az eddigi legkisebb ID-t, hogy ez alá menjünk (biztosítva az egyediséget)
-        async with db.execute("SELECT MIN(user_id) FROM users") as cur:
-            row = await cur.fetchone()
-            current_min = row[0] if (row and row[0] and row[0] < 0) else -100000
+        # Lekérünk egy egyedi alap számot az aktuális időből (negatívként)
+        # Pl: -1717181920
+        base_id = -int(time.time() * 100)
         
         for i in range(amount):
-            unique_fantom_id = current_min - (i + 1)
+            # Minden pont egy teljesen egyedi ID-t kap, így nem ütközhetnek!
+            unique_fantom_id = base_id - i
+            
             await db.execute("""
                 INSERT INTO users (user_id, username, full_name, invited_by, channel_verified)
                 VALUES (?, 'manual_bonus', 'Manuális Pont', ?, 1)
             """, (unique_fantom_id, user_id))
+            
         await db.commit()
-
-
+        
 async def remove_manual_points(user_id: int, amount: int):
     """Manuálisan levon pontot a felhasználótól (elsősorban a manuális pontokat törli)."""
     async with aiosqlite.connect(DB_PATH) as db:
