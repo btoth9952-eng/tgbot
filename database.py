@@ -134,7 +134,7 @@ async def get_all_users_with_counts(limit: int = 50):
             return await cur.fetchall()
 async def add_manual_points(user_id: int, amount: int):
     """Manuálisan hozzáad pontot egy felhasználóhoz és elmenti."""
-    db = await get_db()  # Itt a database.py-on belül ez a get_db() működni fog
+    db = await get_user()  # Itt a database.py-on belül ez a get_user() működni fog
     await db.execute(
         "UPDATE users SET invite_count = invite_count + ? WHERE user_id = ?",
         (amount, user_id)
@@ -143,7 +143,7 @@ async def add_manual_points(user_id: int, amount: int):
 
 async def remove_manual_points(user_id: int, amount: int):
     """Manuálisan levon pontot egy felhasználótól (0-ig) és elmenti."""
-    db = await get_db()
+    db = await get_user()
     await db.execute(
         "UPDATE users SET invite_count = MAX(0, invite_count - ?) WHERE user_id = ?",
         (amount, user_id)
@@ -156,7 +156,7 @@ async def unverify_channel_member(user_id: int):
     Leveszi a felhasználó hitelesítését, levonja a pontot a meghívótól,
     és elmenti a változásokat.
     """
-    db = await get_db()  # Győződj meg róla, hogy nálad is így hívják a DB kapcsolatot!
+    db = await get_user()  # Győződj meg róla, hogy nálad is így hívják a DB kapcsolatot!
     
     # 1. Lekérjük a felhasználó adatait
     async with db.execute(
