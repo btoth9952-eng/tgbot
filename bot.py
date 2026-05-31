@@ -40,10 +40,9 @@ logger = logging.getLogger(__name__)
 
 # ─── Konfiguráció ───────────────────────────────────────────────────────────
 
-BOT_TOKEN   = os.environ["TELEGRAM_BOT_TOKEN"]
-ADMIN_ID    = int(os.environ["TELEGRAM_ADMIN_ID"])
-CHANNEL     = os.environ["TELEGRAM_CHANNEL"]            # pl. "@csatornad"
-CHANNEL_ID  = int(os.environ.get("TELEGRAM_GROUP_ID", 0))  # numerikus ID
+BOT_TOKEN   = os.environ["8611492822:AAF2ENEWpYT_A2BveQt3cnGVZvRirdKatp8"]
+ADMIN_ID    = int(os.environ["7819220971"])
+CHANNEL     = os.environ["@kasziradar"]            # pl. "@csatornad"
 HEALTH_PORT = int(os.environ.get("PORT", 8000))
 MILESTONE   = 20
 
