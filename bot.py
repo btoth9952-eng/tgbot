@@ -640,6 +640,7 @@ def _build_app() -> Application:
     app.add_handler(CommandHandler("refresh", refresh))
     app.add_handler(CommandHandler("pontadd", pontadd))
     app.add_handler(CommandHandler("pontelvesz", pontelvesz))
+    app.add_handler(CommandHandler("admin_pontelvesz", admin_pontelvesz))
     app.add_handler(ChatMemberHandler(on_channel_member_update, ChatMemberHandler.CHAT_MEMBER))
     app.add_error_handler(error_handler)
     return app
