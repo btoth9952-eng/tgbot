@@ -39,13 +39,12 @@ logging.basicConfig(level=logging.INFO, handlers=[_console, _file])
 logger = logging.getLogger(__name__)
 
 # ─── Konfiguráció ───────────────────────────────────────────────────────────
-
-BOT_TOKEN   = os.environ["8611492822:AAF2ENEWpYT_A2BveQt3cnGVZvRirdKatp8"]
-ADMIN_ID    = int(os.environ["7819220971"])
-CHANNEL     = os.environ["@kasziradar"]            # pl. "@csatornad"
+BOT_TOKEN   = "8611492822:AAF2ENEWpYT_A2BveQt3cnGVZvRirdKatp8"
+ADMIN_ID    = 7819220971
+CHANNEL     = "@kasziradar"            # pl. "@csatornad"
+CHANNEL_ID  = 0                        # Ha van numerikus ID-d a csatornához, ide írhatod (pl. -100...számok)
 HEALTH_PORT = int(os.environ.get("PORT", 8000))
 MILESTONE   = 20
-
 _shutdown = asyncio.Event()
 
 ACTIVE_MEMBER_STATUSES = {"member", "administrator", "creator", "restricted"}
