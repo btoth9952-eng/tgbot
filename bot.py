@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Konfiguráció ───────────────────────────────────────────────────────────
 
-BOT_TOKEN   = os.environ["8611492822:AAF2ENEWpYT_A2BveQt3cnGVZvRirdKatp8"]
+BOT_TOKEN   = os.environ["8857627658:AAFBgh02TpMyXfuaHdS3hFqtG02ZtBucPhM"]
 ADMIN_ID    = int(os.environ["7819220971"])
 CHANNEL     = os.environ["@kasziradar"]            # pl. "@csatornad"
 HEALTH_PORT = int(os.environ.get("PORT", 8000))
