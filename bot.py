@@ -554,7 +554,43 @@ async def pontelvesz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+async def admin_pontelvesz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin parancs: Pont manuális levonása egy felhasználótól ID alapján, TELJESEN Csendben."""
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Csak adminisztrátoroknak.")
+        return
 
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Használat: /admin_pontelvesz <felhasználó_ID> <mennyiség>")
+        return
+
+    try:
+        target_id = int(context.args[0])
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Hibás formátum! Az ID-nek és a mennyiségnek is számnak kell lennie.")
+        return
+
+    user_row = await get_user(target_id)
+    if not user_row:
+        await update.message.reply_html(f"❌ Felhasználó [<code>{target_id}</code>] nem található az adatbázisban.")
+        return
+
+    try:
+        await remove_manual_points(target_id, amount)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Hiba történt a pont levonásakor: {e}")
+        return
+
+    new_count = await get_invite_count(target_id)
+    name = user_row["full_name"] or user_row["username"] or str(target_id)
+
+    # Csak az admin kap egy egyszerű visszajelzést, a felhasználó semmit nem vesz észre
+    await update.message.reply_html(
+        f"🤫 <b>Csendes levonás sikeres!</b>\n"
+        f"Manuálisan levonva <b>{amount}</b> pont tőle: <b>{name}</b>.\n"
+        f"Új egyenlege: <b>{new_count}p</b>"
+    )
 # ─── Hibakezelő (Error handler) ──────────────────────────────────────────────
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
